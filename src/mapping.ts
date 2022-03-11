@@ -1,82 +1,78 @@
-import { BigInt } from "@graphprotocol/graph-ts"
+import { ipfs, json } from '@graphprotocol/graph-ts'
 import {
-  Token,
-  Approval,
-  ApprovalForAll,
-  OwnershipTransferred,
-  Transfer
-} from "../generated/Token/Token"
-import { ExampleEntity } from "../generated/schema"
+  Transfer as TransferEvent,
+  Token as TokenContract
+} from '../generated/Token/Token'
+import {
+Token, User
+} from '../generated/schema'
 
-export function handleApproval(event: Approval): void {
-  // Entities can be loaded from the store using a string ID; this ID
-  // needs to be unique across all entities of the same type
-  let entity = ExampleEntity.load(event.transaction.from.toHex())
+const ipfshash = "QmSr3vdMuP2fSxWD7S26KzzBWcAN1eNhm4hk1qaR3x3vmj"
 
-  // Entities only exist after they have been saved to the store;
-  // `null` checks allow to create entities on demand
-  if (!entity) {
-    entity = new ExampleEntity(event.transaction.from.toHex())
+export function handleTransfer(event: TransferEvent): void {
+  /* load the token from the existing Graph Node */
+  let token = Token.load(event.params.tokenId.toString())
+  if (!token) {
+    /* if the token does not yet exist, create it */
+    token = new Token(event.params.tokenId.toString())
+    token.tokenID = event.params.tokenId
+ 
+    token.tokenURI = "/" + event.params.tokenId.toString() + ".json"
 
-    // Entity fields can be set using simple assignments
-    entity.count = BigInt.fromI32(0)
+    /* combine the ipfs hash and the token ID to fetch the token metadata from IPFS */
+    let metadata = ipfs.cat(ipfshash + token.tokenURI)
+    if (metadata) {
+      const value = json.fromBytes(metadata).toObject()
+      if (value) {
+        /* using the metatadata from IPFS, update the token object with the values  */
+        const image = value.get('image')
+        const name = value.get('name')
+        const description = value.get('description')
+        const externalURL = value.get('external_url')
+
+        if (name && image && description && externalURL) {
+          token.name = name.toString()
+          token.image = image.toString()
+          token.externalURL = externalURL.toString()
+          token.description = description.toString()
+          token.ipfsURI = 'ipfs.io/ipfs/' + ipfshash + token.tokenURI
+        }
+
+        const coven = value.get('coven')
+        if (coven) {
+          let covenData = coven.toObject()
+          const type = covenData.get('type')
+          if (type) {
+            token.type = type.toString()
+          }
+
+          const birthChart = covenData.get('birthChart')
+          if (birthChart) {
+            const birthChartData = birthChart.toObject()
+            const sun = birthChartData.get('sun')
+            const moon = birthChartData.get('moon')
+            const rising = birthChartData.get('rising')
+            if (sun && moon && rising) {
+              token.sun = sun.toString()
+              token.moon = moon.toString()
+              token.rising = rising.toString()
+            }
+          }
+        }
+          
+      }
+    }
   }
+  token.updatedAtTimeStamp = event.block.timestamp;
 
-  // BigInt and BigDecimal math are supported
-  entity.count = entity.count + BigInt.fromI32(1)
-
-  // Entity fields can be set based on event parameters
-  entity.owner = event.params.owner
-  entity.approved = event.params.approved
-
-  // Entities can be written to the store with `.save()`
-  entity.save()
-
-  // Note: If a handler doesn't require existing field values, it is faster
-  // _not_ to load the entity from the store. Instead, create it fresh with
-  // `new Entity(...)`, set the fields that should be updated and save the
-  // entity back to the store. Fields that were not set or unset remain
-  // unchanged, allowing for partial updates to be applied.
-
-  // It is also possible to access smart contracts from mappings. For
-  // example, the contract that has emitted the event can be connected to
-  // with:
-  //
-  // let contract = Contract.bind(event.address)
-  //
-  // The following functions can then be called on this contract to access
-  // state variables and other data:
-  //
-  // - contract.COMMUNITY_SALE_PRICE(...)
-  // - contract.MAX_WITCHES_PER_WALLET(...)
-  // - contract.PUBLIC_SALE_PRICE(...)
-  // - contract.balanceOf(...)
-  // - contract.claimListMerkleRoot(...)
-  // - contract.claimed(...)
-  // - contract.communityMintCounts(...)
-  // - contract.communitySaleMerkleRoot(...)
-  // - contract.getApproved(...)
-  // - contract.getBaseURI(...)
-  // - contract.getLastTokenId(...)
-  // - contract.isApprovedForAll(...)
-  // - contract.isCommunitySaleActive(...)
-  // - contract.isPublicSaleActive(...)
-  // - contract.maxCommunitySaleWitches(...)
-  // - contract.maxGiftedWitches(...)
-  // - contract.maxWitches(...)
-  // - contract.name(...)
-  // - contract.numGiftedWitches(...)
-  // - contract.owner(...)
-  // - contract.ownerOf(...)
-  // - contract.royaltyInfo(...)
-  // - contract.supportsInterface(...)
-  // - contract.symbol(...)
-  // - contract.tokenURI(...)
-  // - contract.verificationHash(...)
-}
-
-export function handleApprovalForAll(event: ApprovalForAll): void {}
-
-export function handleOwnershipTransferred(event: OwnershipTransferred): void {}
-
-export function handleTransfer(event: Transfer): void {}
+  /* set or update the owner field and save the token to the Graph Node */
+  token.owner = event.params.to.toHexString()
+  token.save()
+  
+  /* if the user does not yet exist, create them */
+  let user = User.load(event.params.to.toHexString())
+  if (!user) {
+    user = new User(event.params.to.toHexString())
+    user.save()
+  }
+ }
